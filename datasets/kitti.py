@@ -52,6 +52,7 @@ class KITTIDataset(CustomDataset):
     def __len__(self):
         return len(self.im_idx)
        
+    ##@xh
     def __getitem__(self, index):        
         scan_id = self.im_idx[index]
         raw_data = np.fromfile(self.im_idx[index], dtype=np.float32).reshape((-1, 4))
@@ -59,13 +60,47 @@ class KITTIDataset(CustomDataset):
             annotated_data = np.expand_dims(np.zeros_like(raw_data[:, 0], dtype=int), axis=1)
         else:
             annotated_data = np.fromfile(self.im_idx[index].replace('velodyne', 'labels')[:-3] + 'label',
-                                         dtype=np.uint32).reshape((-1, 1))
+                                          dtype=np.uint32).reshape((-1, 1))
             annotated_data = annotated_data & 0xFFFF  # delete high 16 digits binary
             annotated_data = np.vectorize(self.learning_map.__getitem__)(annotated_data)
 
-        data = (raw_data[:, :3], raw_data[:, 3][:,None], annotated_data.astype(np.int32))
+        # --- 第一步核心改动：坐标解耦与地平面归一化 ---
+        points = raw_data[:, :3] # N, 3
+        features = raw_data[:, 3][:, None] # N, 1 (Intensity)
+
+        # 1. 地平面归一化 (取 1% 分位数模拟地面高度)
+        ground_z_estimate = np.percentile(points[:, 2], 1)
+        points[:, 2] -= ground_z_estimate
+
+        # 2. 坐标去中心化 (计算点到 Voxel 中心的偏移)
+        # voxel_size 来自初始化定义的 self.voxel_size
+        coords_idx = np.floor(points / self.voxel_size)
+        voxel_centers = (coords_idx + 0.5) * self.voxel_size
+        offsets = points - voxel_centers # 得到 (Δx, Δy, Δz)
+
+        # 3. 拼接解耦后的特征 [Intensity, Δx, Δy, Δz]
+        # 注意：这里的 points 已经是归一化后的坐标，features 变成了 4 维
+        new_features = offsets
+
+        # 更新 data 元组，将 new_features 传给后续逻辑
+        data = (points, new_features, annotated_data.astype(np.int32))
+        # ------------------------------------------
 
         return self.getitem(index, scan_id, data)
+    # def __getitem__(self, index):        
+    #     scan_id = self.im_idx[index]
+    #     raw_data = np.fromfile(self.im_idx[index], dtype=np.float32).reshape((-1, 4))
+    #     if self.imageset == 'test':
+    #         annotated_data = np.expand_dims(np.zeros_like(raw_data[:, 0], dtype=int), axis=1)
+    #     else:
+    #         annotated_data = np.fromfile(self.im_idx[index].replace('velodyne', 'labels')[:-3] + 'label',
+    #                                      dtype=np.uint32).reshape((-1, 1))
+    #         annotated_data = annotated_data & 0xFFFF  # delete high 16 digits binary
+    #         annotated_data = np.vectorize(self.learning_map.__getitem__)(annotated_data)
+
+    #     data = (raw_data[:, :3], raw_data[:, 3][:,None], annotated_data.astype(np.int32))
+
+    #     return self.getitem(index, scan_id, data)
         
     
 

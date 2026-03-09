@@ -58,23 +58,61 @@ class nuScenesDataset(CustomDataset):
     def __len__(self):
         return len(self.im_idx)
     
+    # def __getitem__(self, index):
+    #     info = self.im_idx[index]
+    #     lidar_path = info['lidar_path'] # ex: 'samples/LIDAR_TOP/n015-2018-07-18-11-07-57+0800__LIDAR_TOP__1531883530449377.pcd.bin'
+    #     lidar_sd_token = self.nusc.get('sample', info['token'])['data']['LIDAR_TOP']
+    #     lidarseg_labels_filename = os.path.join(self.nusc.dataroot, self.nusc.get('lidarseg', lidar_sd_token)['filename'])
+
+    #     points_label = np.fromfile(lidarseg_labels_filename, dtype=np.uint8).reshape([-1, 1])
+    #     points_label = np.vectorize(self.learning_map.__getitem__)(points_label)
+    #     points = np.fromfile(os.path.join(self.nusc.dataroot, lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])
+    #     data = (points[:,:3], points[:,3], points_label)
+
+    #     # RV_image_32 = self.augmentor.makeRV(points[:,:3], points_label, 32, 1024)
+    #     # RV_image_64_label = self.augmentor.makeRV_label(points[:,:3], points_label, 64, 1024)
+    #     # return lidar_path, RV_image_32, RV_image_64_label, data
+        
+    #     return self.getitem(index, lidar_path, data)
+    
+    ##@xh
     def __getitem__(self, index):
         info = self.im_idx[index]
-        lidar_path = info['lidar_path'] # ex: 'samples/LIDAR_TOP/n015-2018-07-18-11-07-57+0800__LIDAR_TOP__1531883530449377.pcd.bin'
+        lidar_path = info['lidar_path'] 
         lidar_sd_token = self.nusc.get('sample', info['token'])['data']['LIDAR_TOP']
         lidarseg_labels_filename = os.path.join(self.nusc.dataroot, self.nusc.get('lidarseg', lidar_sd_token)['filename'])
 
         points_label = np.fromfile(lidarseg_labels_filename, dtype=np.uint8).reshape([-1, 1])
         points_label = np.vectorize(self.learning_map.__getitem__)(points_label)
-        points = np.fromfile(os.path.join(self.nusc.dataroot, lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])
-        data = (points[:,:3], points[:,3], points_label)
+        
+        # nuScenes 原始数据是 5 列: [x, y, z, intensity, ring_index]
+        points_raw = np.fromfile(os.path.join(self.nusc.dataroot, lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])
 
-        # RV_image_32 = self.augmentor.makeRV(points[:,:3], points_label, 32, 1024)
-        # RV_image_64_label = self.augmentor.makeRV_label(points[:,:3], points_label, 64, 1024)
-        # return lidar_path, RV_image_32, RV_image_64_label, data
+        # --- 第一步核心改动：坐标解耦与地平面归一化 ---
+        xyz = points_raw[:, :3]        # N, 3
+        intensity = points_raw[:, 3][:, None] # N, 1
+
+        # 1. 地平面归一化 (取 1% 分位数作为地面参考点)
+        # nuScenes 的高度分布与 KITTI 不同，这步对跨域泛化至关重要
+        ground_z_estimate = np.percentile(xyz[:, 2], 1)
+        xyz[:, 2] -= ground_z_estimate
+
+        # 2. 坐标去中心化 (计算相对于 Voxel 中心的偏移)
+        # 使用 self.voxel_size (配置中通常为 0.2)
+        coords_idx = np.floor(xyz / self.voxel_size)
+        voxel_centers = (coords_idx + 0.5) * self.voxel_size
+        offsets = xyz - voxel_centers  # 得到 (Δx, Δy, Δz)
+
+        # 3. 构造 4 维特征输入 [Intensity, Δx, Δy, Δz]
+        # 抛弃原始坐标 z，强制模型学习局部几何流形
+        new_features = offsets
+
+        # 重新打包成 data 元组
+        # data[0] 是归一化后的坐标，data[1] 是新特征，data[2] 是标签
+        data = (xyz, new_features, points_label.astype(np.int32))
+        # ------------------------------------------
         
         return self.getitem(index, lidar_path, data)
-    
     
     def make_positive_samples(self, xyz, ref, semantic_label):
         return_xyz, return_ref, return_label = [xyz], [ref], [semantic_label]

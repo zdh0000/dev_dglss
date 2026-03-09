@@ -2,7 +2,7 @@
 ## Model options
 model:
   name: 'MinkUNet34'
-  in_feat_size: 1
+  in_feat_size: 3
   out_classes: 10
   out_shape: null
   min_coordinate: null

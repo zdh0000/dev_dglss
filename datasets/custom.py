@@ -77,7 +77,10 @@ class CustomDataset(Dataset):
         
         if not self.training:
             coord = torch.from_numpy(xyz)
-            feat = torch.ones((coord.shape[0], 1)).float()
+            ##@xh
+            #feat = torch.ones((coord.shape[0], 1)).float()
+            feat = torch.from_numpy(ref).float()
+
             semantic_label = torch.from_numpy(semantic_label).int()
 
             return (scan_id, coord, feat, semantic_label, torch.tensor(index))
@@ -90,8 +93,9 @@ class CustomDataset(Dataset):
         coords, feats, semantic_labels = [], [], []
         for i in range(len(xyz)):
             coord = torch.from_numpy(xyz[i])
-            
-            feat = torch.ones((coord.shape[0], 1)).float()
+            ##@xh
+            #feat = torch.ones((coord.shape[0], 1)).float()
+            feat = torch.from_numpy(ref[i]).float()
             label = torch.from_numpy(semantic_label[i]).int()
             quantized_coord, quantized_feat, quantized_label, voxel_idx = ME.utils.sparse_quantize(coord,
                                                                                                     feat,

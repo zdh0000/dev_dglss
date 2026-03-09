@@ -67,6 +67,41 @@ class WaymoDataset(CustomDataset):
             annotated_data = annotated_data & 0xFFFF  # delete high 16 digits binary
             annotated_data = np.vectorize(self.learning_map.__getitem__)(annotated_data)
             
+        # --- 第一步核心改动：坐标解耦与地平面归一化 ---
+        points = raw_data[:, :3] # N, 3
+        
+        # 1. 地平面归一化
+        # 使用 1% 分位数估计地面高度，消除不同数据集间的绝对高度偏置 [cite: 8]
+        ground_z_estimate = np.percentile(points[:, 2], 1)
+        points[:, 2] -= ground_z_estimate
+
+        # 2. 坐标去中心化 (Coordinate Decentralization)
+        # 计算点到其所属 Voxel 中心的偏移 Δ，作为局部几何特征 [cite: 8]
+        voxel_size = self.voxel_size
+        coords_idx = np.floor(points / voxel_size)
+        voxel_centers = (coords_idx + 0.5) * voxel_size
+        offsets = points - voxel_centers # 得到 (Δx, Δy, Δz)
+
+        # 3. 构造解耦后的输入特征 [Ref, Δx, Δy, Δz]
+        # 保留原有的 tanh 反射强度归一化逻辑
+        ref = np.tanh(raw_data[:, 3])[:, None] # 确保维度为 (N, 1)
+        new_features = offsets
+
+        # 更新 data 元组，确保 coordinates 和 features 均为解耦后的数据
+        data = (points, new_features, annotated_data.astype(np.int32))
+        # ------------------------------------------
+
+        return self.getitem(index, scan_id, data)
+    # def __getitem__(self, index):
+    #     scan_id = self.im_idx[index]
+    #     raw_data = np.fromfile(self.im_idx[index], dtype=np.float32).reshape((-1,4))
+    #     if self.imageset == 'test':
+    #         annotated_data = np.expand_dims(np.zeros_like(raw_data[:, 0], dtype=int), axis=1)
+    #     else:
+    #         annotated_data = np.fromfile(self.im_idx[index].replace('velodyne', 'labels')[:-3] + 'label',dtype=np.uint32).reshape((-1, 1))
+    #         annotated_data = annotated_data & 0xFFFF  # delete high 16 digits binary
+    #         annotated_data = np.vectorize(self.learning_map.__getitem__)(annotated_data)
+            
         ref = np.tanh(raw_data[:,3])
         data = (raw_data[:, :3], ref, annotated_data.astype(np.int32))
 
